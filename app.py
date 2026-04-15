@@ -6,8 +6,8 @@ import numpy as np
 
 st.set_page_config(page_title="Finance Dashboard AI", layout="wide")
 
-st.title("🚀 מחולל P&L ניהולי - גרסה מעודכנת")
-st.write("הכנסות מזוהות לפי REV, הוצאות Sales משויכות ל-S&M.")
+st.title("🚀 מחולל P&L ניהולי וסינון חכם (V34)")
+st.write("זיהוי REV כהכנסות, Sales כ-S&M, ו-Non Cash כ-OTHER.")
 
 def clean_acc(v):
     return str(v).replace('.0', '').strip()
@@ -70,62 +70,74 @@ if uploaded_files:
                 num_fmt = workbook.add_format({'num_format': '#,##0', 'border': 1})
                 total_fmt = workbook.add_format({'bold': True, 'bg_color': '#BFBFBF', 'num_format': '#,##0', 'border': 1})
 
-                # --- דוח P&L ---
+                # --- 1. דוח Executive P&L ---
                 ws_pnl = workbook.add_worksheet('Executive P&L')
                 pnl_data = final[final['Account Type'] == 'P&L'].copy()
                 pnl_data['Report_Amount'] = pnl_data['Amount'] * -1
-                
                 pnl_summary = pnl_data.groupby('Budget item')['Report_Amount'].sum().reset_index()
                 
-                # הגדרת מחלקות לפי הלוגיקה החדשה שלך
+                # הגדרת מחלקות
                 categories = {
                     "REVENUE": ["REV", "Revenue", "Income", "הכנסות", "מכירות"],
                     "COGS": ["COGS", "Cost of Goods", "עלות המכר"],
                     "R&D": ["R&D", "Research", "מופ", "פיתוח"],
-                    "S&M": ["Sales", "Marketing", "S&M", "שיווק", "מכירות הוצאה"], # Sales נכנס לכאן
-                    "G&A": ["G&A", "General", "Administrative", "הנהלה", "כלליות"],
+                    "S&M": ["Sales", "Marketing", "S&M", "שיווק"],
+                    "G&A": ["G&A", "General", "Administrative", "הנהלה"],
+                    "OTHER": ["Non Cash", "Depreciation", "Interest", "Tax", "פחת"] # Non Cash נכנס לכאן
                 }
                 
-                row = 2
-                ws_pnl.write('A1', 'Executive P&L Statement', workbook.add_format({'bold': True, 'font_size': 14}))
-                
+                row = 3
                 grand_total = 0
+                ws_pnl.write('A1', 'Executive Profit & Loss', workbook.add_format({'bold': True, 'font_size': 14}))
+                
+                used_items = []
                 for cat_name, keywords in categories.items():
-                    # סינון לפי מילות מפתח ב-Budget Item
                     mask = pnl_summary['Budget item'].str.contains('|'.join(keywords), case=False, na=False)
                     sub_df = pnl_summary[mask]
-                    pnl_summary = pnl_summary[~mask] # מונע כפילויות
+                    used_items.extend(sub_df['Budget item'].tolist())
                     
                     if not sub_df.empty:
                         ws_pnl.write(row, 0, cat_name, cat_fmt); ws_pnl.write(row, 1, '', cat_fmt); row += 1
-                        cat_sum = 0
+                        c_sum = 0
                         for _, r in sub_df.iterrows():
-                            ws_pnl.write(row, 0, r['Budget item'])
-                            ws_pnl.write(row, 1, r['Report_Amount'], num_fmt)
-                            cat_sum += r['Report_Amount']
-                            row += 1
-                        ws_pnl.write(row, 0, f"Total {cat_name}", total_fmt); ws_pnl.write(row, 1, cat_sum, total_fmt)
-                        grand_total += cat_sum
-                        row += 2
+                            ws_pnl.write(row, 0, r['Budget item']); ws_pnl.write(row, 1, r['Report_Amount'], num_fmt)
+                            c_sum += r['Report_Amount']; row += 1
+                        ws_pnl.write(row, 0, f"Total {cat_name}", total_fmt); ws_pnl.write(row, 1, c_sum, total_fmt)
+                        grand_total += c_sum; row += 2
 
-                # מה שנשאר נכנס ל-Other
-                if not pnl_summary.empty:
-                    ws_pnl.write(row, 0, "OTHER", cat_fmt); row += 1
-                    other_sum = pnl_summary['Report_Amount'].sum()
-                    for _, r in pnl_summary.iterrows():
-                        ws_pnl.write(row, 0, r['Budget item']); ws_pnl.write(row, 1, r['Report_Amount'], num_fmt); row += 1
-                    ws_pnl.write(row, 0, "Total Other", total_fmt); ws_pnl.write(row, 1, other_sum, total_fmt)
-                    grand_total += other_sum
-                    row += 2
-
-                ws_pnl.write(row, 0, "EBITDA (Net Profit)", head_fmt); ws_pnl.write(row, 1, grand_total, head_fmt)
+                ws_pnl.write(row, 0, "NET PROFIT (EBITDA)", head_fmt); ws_pnl.write(row, 1, grand_total, head_fmt)
                 ws_pnl.set_column('A:B', 30)
 
-                # שאר הלשוניות (Data וסינון)
-                final[['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget item', 'Account Type']].to_excel(writer, sheet_name='Data', index=False)
-                # ... לוגיקת סינון חכם ...
+                # --- 2. גיליון Data ---
+                final_cols = ['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget item', 'Account Type']
+                final[final_cols].to_excel(writer, sheet_name='Data', index=False)
 
-            st.success("✅ האתר עודכן! הורד את הקובץ לבדיקה.")
-            st.download_button("📥 הורד אקסל מעודכן (V33)", output.getvalue(), "Finance_Dashboard_V33.xlsx")
+                # --- 3. גיליון סינון מאוחד (החלק שחזר) ---
+                ws_filt = workbook.add_worksheet('סינון מאוחד')
+                ents = ["All"] + sorted(final['Entity'].unique().tolist())
+                budgs = ["All"] + sorted(final['Budget item'].unique().tolist())
+                months = sorted(final['Date'].dt.to_period('M').dt.to_timestamp().unique())
+                
+                ls = workbook.add_worksheet('Lists')
+                for i, v in enumerate(ents): ls.write(i, 0, v)
+                for i, v in enumerate(budgs): ls.write(i, 1, v)
+                for i, v in enumerate(months): ls.write_datetime(i, 2, v, workbook.add_format({'num_format': 'mm/yyyy'}))
+
+                ws_filt.write('A1', 'Entity:'); ws_filt.write('C1', 'Budget:'); ws_filt.write('E1', 'Total:', head_fmt)
+                ws_filt.data_validation('B1', {'validate': 'list', 'source': f'=Lists!$A$1:$A${len(ents)}'})
+                ws_filt.data_validation('D1', {'validate': 'list', 'source': f'=Lists!$B$1:$B${len(budgs)}'})
+                ws_filt.write('B1', 'All'); ws_filt.write('D1', 'All')
+
+                for i, h in enumerate(['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget Item', 'Type']):
+                    ws_filt.write(3, i, h, head_fmt)
+                
+                lr = len(final) + 1
+                cond = f'(IF($B$1="All", 1, Data!$A$2:$A${lr}=$B$1)) * (IF($D$1="All", 1, Data!$G$2:$G${lr}=$D$1))'
+                ws_filt.write_dynamic_array_formula('A5:A5', f'=IFERROR(FILTER(Data!A2:H{lr}, {cond}), "No Results")')
+                ws_filt.write_formula('F1', '=SUM(E5:E20000)', total_fmt)
+                ws_filt.set_column('A:H', 15)
+
+            st.success("✅ האתר מעודכן!")
+            st.download_button("📥 הורד אקסל V34", output.getvalue(), "Finance_Dashboard_V34.xlsx")
         except Exception as e:
             st.error(f"שגיאה: {e}")
