@@ -6,8 +6,8 @@ import numpy as np
 
 st.set_page_config(page_title="Finance Dashboard AI", layout="wide")
 
-st.title("🚀 מחולל P&L - גרסה V39")
-st.write("תיקון סופי בהחלט: Non Cash נשלף ראשון לקטגוריית OTHER.")
+st.title("🚀 מחולל P&L וסינון חכם מלא (V40)")
+st.write("גרסה סופית: P&L מדויק + גיליון סינון חכם עם טווח תאריכים.")
 
 def clean_acc(v):
     return str(v).replace('.0', '').strip()
@@ -56,7 +56,7 @@ if uploaded_files:
                                          'Memo': df_inc['Memo/Description'].fillna('-')})
                 all_d.append(temp)
 
-            # 3. איחוד
+            # 3. איחוד וניקוי
             final = pd.merge(pd.concat(all_d).dropna(subset=['Date']), df_mapping, on=['Entity', 'MapKey'], how='left')
             final['Account Type'] = final['Account Type'].fillna('P&L')
             final['Budget item'] = final['Budget item'].fillna('Unmapped')
@@ -64,18 +64,18 @@ if uploaded_files:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 workbook = writer.book
+                # עיצובים
                 head_fmt = workbook.add_format({'bold': True, 'bg_color': '#1F4E78', 'font_color': 'white', 'border': 1})
                 num_fmt = workbook.add_format({'num_format': '#,##0', 'border': 1})
                 total_fmt = workbook.add_format({'bold': True, 'bg_color': '#BFBFBF', 'num_format': '#,##0', 'border': 1})
                 cat_fmt = workbook.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
 
-                # --- דוח P&L ---
+                # --- א. דוח Executive P&L ---
                 ws_pnl = workbook.add_worksheet('Executive P&L')
-                p_data = final[final['Account Type'] == 'P&L'].copy()
-                p_sum = p_data.groupby('Budget item')['Amount'].sum().reset_index()
+                p_sum = final[final['Account Type'] == 'P&L'].groupby('Budget item')['Amount'].sum().reset_index()
                 
-                # הגדרת סדר קטגוריות - OTHER קודם כל!
-                categories_config = [
+                # סיווג (Non-Cash נשלף ראשון!)
+                configs = [
                     {"name": "OTHER (Non-Cash)", "keys": ["Non Cash", "Depreciation", "Interest", "Tax", "פחת"]},
                     {"name": "REVENUE", "keys": ["REV", "Revenue", "Income", "הכנסות"]},
                     {"name": "COGS", "keys": ["COGS", "עלות המכר"]},
@@ -84,58 +84,25 @@ if uploaded_files:
                     {"name": "G&A", "keys": ["G&A", "General", "Administrative", "הנהלה"]}
                 ]
                 
-                # שלב הסיווג למניעת כפילויות וזיהוי שגוי ב-Revenue
                 classified = {}
-                remaining = p_sum.copy()
-                
-                for config in categories_config:
-                    mask = remaining['Budget item'].str.contains('|'.join(config["keys"]), case=False, na=False)
-                    classified[config["name"]] = remaining[mask]
-                    remaining = remaining[~mask]
-                
-                # בניית התצוגה לפי הסדר שאתה רוצה (Revenue בראש, Other בסוף)
-                display_order = ["REVENUE", "COGS", "R&D", "S&M", "G&A", "OTHER (Non-Cash)"]
+                rem = p_sum.copy()
+                for c in configs:
+                    mask = rem['Budget item'].str.contains('|'.join(c["keys"]), case=False, na=False)
+                    classified[c["name"]] = rem[mask]
+                    rem = rem[~mask]
                 
                 row = 2
-                grand_total_check = 0
-                ws_pnl.write('A1', 'Executive Profit & Loss Statement', workbook.add_format({'bold': True, 'font_size': 14}))
-                
-                for cat_name in display_order:
-                    sub = classified.get(cat_name, pd.DataFrame())
+                grand_profit = 0
+                display_order = ["REVENUE", "COGS", "R&D", "S&M", "G&A", "OTHER (Non-Cash)"]
+                for name in display_order:
+                    sub = classified.get(name, pd.DataFrame())
                     if not sub.empty:
-                        ws_pnl.write(row, 0, cat_name, cat_fmt); row += 1
+                        ws_pnl.write(row, 0, name, cat_fmt); row += 1
                         c_sum = 0
                         for _, r in sub.iterrows():
                             ws_pnl.write(row, 0, r['Budget item'])
                             ws_pnl.write(row, 1, abs(r['Amount']), num_fmt)
                             c_sum += abs(r['Amount'])
-                            grand_total_check -= r['Amount']
+                            grand_profit -= r['Amount']
                             row += 1
-                        ws_pnl.write(row, 0, f"Total {cat_name}", total_fmt); ws_pnl.write(row, 1, c_sum, total_fmt)
-                        row += 2
-
-                # כל השאר
-                if not remaining.empty:
-                    ws_pnl.write(row, 0, "UNMAPPED / OTHER", cat_fmt); row += 1
-                    u_sum = 0
-                    for _, r in remaining.iterrows():
-                        ws_pnl.write(row, 0, r['Budget item'])
-                        ws_pnl.write(row, 1, abs(r['Amount']), num_fmt)
-                        u_sum += abs(r['Amount'])
-                        grand_total_check -= r['Amount']
-                        row += 1
-                    ws_pnl.write(row, 0, "Total Unmapped", total_fmt); ws_pnl.write(row, 1, u_sum, total_fmt)
-                    row += 2
-
-                ws_pnl.write(row, 0, "NET PROFIT (EBITDA)", head_fmt)
-                ws_pnl.write(row, 1, grand_total_check, head_fmt)
-                ws_pnl.set_column('A:A', 40); ws_pnl.set_column('B:B', 15)
-
-                # --- שאר הלשוניות ---
-                final[['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget item', 'Account Type']].to_excel(writer, sheet_name='Data', index=False)
-                # ... (סינון חכם) ...
-
-            st.success("✅ גרסה V39 מעודכנת. בדוק את ה-Other בתחתית!")
-            st.download_button("📥 הורד אקסל V39", output.getvalue(), "Finance_Dashboard_V39.xlsx")
-        except Exception as e:
-            st.error(f"שגיאה: {e}")
+                        ws_pnl.write(row, 0, f"Total {name}", total_fmt); ws_pnl.write(row, 1, c_sum, total
