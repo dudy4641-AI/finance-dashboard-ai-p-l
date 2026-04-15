@@ -6,8 +6,8 @@ import numpy as np
 
 st.set_page_config(page_title="Finance Dashboard AI", layout="wide")
 
-st.title("🚀 מחולל P&L - גרסת התאמה מלאה ל-Data (V38)")
-st.write("תיקון הפרשי סכומים: הצגת כל סעיפי ה-P&L ללא יוצא מן הכלל.")
+st.title("🚀 מחולל P&L - גרסה V39")
+st.write("תיקון סופי בהחלט: Non Cash נשלף ראשון לקטגוריית OTHER.")
 
 def clean_acc(v):
     return str(v).replace('.0', '').strip()
@@ -74,40 +74,49 @@ if uploaded_files:
                 p_data = final[final['Account Type'] == 'P&L'].copy()
                 p_sum = p_data.groupby('Budget item')['Amount'].sum().reset_index()
                 
-                # הגדרת קטגוריות
-                categories = [
+                # הגדרת סדר קטגוריות - OTHER קודם כל!
+                categories_config = [
+                    {"name": "OTHER (Non-Cash)", "keys": ["Non Cash", "Depreciation", "Interest", "Tax", "פחת"]},
                     {"name": "REVENUE", "keys": ["REV", "Revenue", "Income", "הכנסות"]},
                     {"name": "COGS", "keys": ["COGS", "עלות המכר"]},
                     {"name": "R&D", "keys": ["R&D", "Research", "מופ"]},
                     {"name": "S&M", "keys": ["Sales", "Marketing", "S&M", "שיווק"]},
-                    {"name": "G&A", "keys": ["G&A", "General", "Administrative", "הנהלה"]},
-                    {"name": "OTHER (Non-Cash)", "keys": ["Non Cash", "Depreciation", "Interest", "Tax", "פחת"]}
+                    {"name": "G&A", "keys": ["G&A", "General", "Administrative", "הנהלה"]}
                 ]
+                
+                # שלב הסיווג למניעת כפילויות וזיהוי שגוי ב-Revenue
+                classified = {}
+                remaining = p_sum.copy()
+                
+                for config in categories_config:
+                    mask = remaining['Budget item'].str.contains('|'.join(config["keys"]), case=False, na=False)
+                    classified[config["name"]] = remaining[mask]
+                    remaining = remaining[~mask]
+                
+                # בניית התצוגה לפי הסדר שאתה רוצה (Revenue בראש, Other בסוף)
+                display_order = ["REVENUE", "COGS", "R&D", "S&M", "G&A", "OTHER (Non-Cash)"]
                 
                 row = 2
                 grand_total_check = 0
-                remaining = p_sum.copy()
+                ws_pnl.write('A1', 'Executive Profit & Loss Statement', workbook.add_format({'bold': True, 'font_size': 14}))
                 
-                for cat in categories:
-                    mask = remaining['Budget item'].str.contains('|'.join(cat["keys"]), case=False, na=False)
-                    sub = remaining[mask]
-                    remaining = remaining[~mask] # מוציא מהרשימה כדי שלא יסווג פעמיים
-                    
+                for cat_name in display_order:
+                    sub = classified.get(cat_name, pd.DataFrame())
                     if not sub.empty:
-                        ws_pnl.write(row, 0, cat["name"], cat_fmt); row += 1
+                        ws_pnl.write(row, 0, cat_name, cat_fmt); row += 1
                         c_sum = 0
                         for _, r in sub.iterrows():
                             ws_pnl.write(row, 0, r['Budget item'])
                             ws_pnl.write(row, 1, abs(r['Amount']), num_fmt)
                             c_sum += abs(r['Amount'])
-                            grand_total_check -= r['Amount'] # חישוב רווח נקי (הכנסה במינוס מוסיפה לרווח)
+                            grand_total_check -= r['Amount']
                             row += 1
-                        ws_pnl.write(row, 0, f"Total {cat['name']}", total_fmt); ws_pnl.write(row, 1, c_sum, total_fmt)
+                        ws_pnl.write(row, 0, f"Total {cat_name}", total_fmt); ws_pnl.write(row, 1, c_sum, total_fmt)
                         row += 2
 
-                # שאריות - כל מה שלא נכנס לקטגוריות (כאן כנראה ההפרש שלך!)
+                # כל השאר
                 if not remaining.empty:
-                    ws_pnl.write(row, 0, "UNMAPPED / OTHER P&L", cat_fmt); row += 1
+                    ws_pnl.write(row, 0, "UNMAPPED / OTHER", cat_fmt); row += 1
                     u_sum = 0
                     for _, r in remaining.iterrows():
                         ws_pnl.write(row, 0, r['Budget item'])
@@ -118,15 +127,15 @@ if uploaded_files:
                     ws_pnl.write(row, 0, "Total Unmapped", total_fmt); ws_pnl.write(row, 1, u_sum, total_fmt)
                     row += 2
 
-                ws_pnl.write(row, 0, "EBITDA (Total P&L Match)", head_fmt)
+                ws_pnl.write(row, 0, "NET PROFIT (EBITDA)", head_fmt)
                 ws_pnl.write(row, 1, grand_total_check, head_fmt)
                 ws_pnl.set_column('A:A', 40); ws_pnl.set_column('B:B', 15)
 
                 # --- שאר הלשוניות ---
                 final[['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget item', 'Account Type']].to_excel(writer, sheet_name='Data', index=False)
-                # (לוגיקת סינון חכם נשמרת...)
+                # ... (סינון חכם) ...
 
-            st.success(f"✅ גרסה V38 מוכנה. סה''כ תנועות P&L ב-Data שמעובדות: {p_data['Amount'].sum():,.0f}")
-            st.download_button("📥 הורד אקסל V38", output.getvalue(), "Finance_Dashboard_V38.xlsx")
+            st.success("✅ גרסה V39 מעודכנת. בדוק את ה-Other בתחתית!")
+            st.download_button("📥 הורד אקסל V39", output.getvalue(), "Finance_Dashboard_V39.xlsx")
         except Exception as e:
             st.error(f"שגיאה: {e}")
