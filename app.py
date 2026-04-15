@@ -105,4 +105,52 @@ if uploaded_files:
                             c_sum += abs(r['Amount'])
                             grand_profit -= r['Amount']
                             row += 1
-                        ws_pnl.write(row, 0, f"Total {name}", total_fmt); ws_pnl.write(row, 1, c_sum, total
+                        ws_pnl.write(row, 0, f"Total {name}", total_fmt); ws_pnl.write(row, 1, c_sum, total_fmt)
+                        row += 2
+
+                ws_pnl.write(row, 0, "NET PROFIT (EBITDA)", head_fmt); ws_pnl.write(row, 1, grand_profit, head_fmt)
+                ws_pnl.set_column('A:A', 40)
+
+                # --- ב. גיליון Data ---
+                final_cols = ['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget item', 'Account Type']
+                final[final_cols].to_excel(writer, sheet_name='Data', index=False)
+
+                # --- ג. גיליון סינון חכם (החלק שחזר) ---
+                ws_filt = workbook.add_worksheet('סינון מאוחד')
+                ents = ["All"] + sorted(final['Entity'].unique().tolist())
+                budgs = ["All"] + sorted(final['Budget item'].unique().tolist())
+                months = sorted(final['Date'].dt.to_period('M').dt.to_timestamp().unique())
+                
+                # יצירת רשימות עזר
+                ls = workbook.add_worksheet('Lists')
+                for i, v in enumerate(ents): ls.write(i, 0, v)
+                for i, v in enumerate(budgs): ls.write(i, 1, v)
+                for i, v in enumerate(months): ls.write_datetime(i, 2, v, workbook.add_format({'num_format': 'mm/yyyy'}))
+
+                # כותרות פילטרים
+                ws_filt.write('A1', 'Entity:'); ws_filt.write('C1', 'Budget:'); ws_filt.write('E1', 'From:'); ws_filt.write('G1', 'To:'); ws_filt.write('I1', 'Total:', head_fmt)
+                ws_filt.data_validation('B1', {'validate': 'list', 'source': f'=Lists!$A$1:$A${len(ents)}'})
+                ws_filt.data_validation('D1', {'validate': 'list', 'source': f'=Lists!$B$1:$B${len(budgs)}'})
+                ws_filt.data_validation('F1', {'validate': 'list', 'source': f'=Lists!$C$1:$C${len(months)}'})
+                ws_filt.data_validation('H1', {'validate': 'list', 'source': f'=Lists!$C$1:$C${len(months)}'})
+                
+                ws_filt.write('B1', 'All'); ws_filt.write('D1', 'All')
+                if months:
+                    ws_filt.write_datetime('F1', months[0], workbook.add_format({'num_format': 'mm/yyyy'}))
+                    ws_filt.write_datetime('H1', months[-1], workbook.add_format({'num_format': 'mm/yyyy'}))
+
+                # כותרות טבלה
+                for i, h in enumerate(['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget Item', 'Type']):
+                    ws_filt.write(3, i, h, head_fmt)
+                
+                # נוסחת ה-FILTER הדינמית
+                lr = len(final) + 1
+                cond = f'(IF($B$1="All", 1, Data!$A$2:$A${lr}=$B$1)) * (IF($D$1="All", 1, Data!$G$2:$G${lr}=$D$1)) * (Data!$B$2:$B${lr}>=$F$1) * (Data!$B$2:$B${lr}<=EOMONTH($H$1,0))'
+                ws_filt.write_dynamic_array_formula('A5:A5', f'=IFERROR(FILTER(Data!A2:H{lr}, {cond}), "No Results")')
+                ws_filt.write_formula('J1', '=SUM(E5:E20000)', total_fmt)
+                ws_filt.set_column('A:H', 15)
+
+            st.success("✅ גרסה V40 מוכנה עם כל הגיליונות והפילטרים!")
+            st.download_button("📥 הורד אקסל V40", output.getvalue(), "Finance_Dashboard_V40.xlsx")
+        except Exception as e:
+            st.error(f"שגיאה: {e}")
