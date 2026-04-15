@@ -6,8 +6,8 @@ import numpy as np
 
 st.set_page_config(page_title="Finance Dashboard AI", layout="wide")
 
-st.title("🚀 מחולל P&L וסינון חכם (V36)")
-st.write("תיקון סימני הכנסות/הוצאות ומיקום Non Cash ב-OTHER.")
+st.title("🚀 מחולל P&L וסינון חכם (V37)")
+st.write("תיקון סופי: Non Cash ב-OTHER והצגת סכומים חיוביים בדוח.")
 
 def clean_acc(v):
     return str(v).replace('.0', '').strip()
@@ -71,18 +71,16 @@ if uploaded_files:
                 # --- 1. Executive P&L ---
                 ws_pnl = workbook.add_worksheet('Executive P&L')
                 p_data = final[final['Account Type'] == 'P&L'].copy()
-                
                 p_sum = p_data.groupby('Budget item')['Amount'].sum().reset_index()
                 
-                # הגדרת סדר ומחלקות
-                # הכנסות בדרך כלל במינוס בהנה"ח, לכן נהפוך סימן רק להן בחישוב התצוגה
+                # סדר עדיפויות לסיווג - OTHER קודם כדי למנוע זיהוי שגוי ב-Revenue
                 categories = [
+                    {"name": "OTHER (Non-Cash/Interest/Tax)", "keys": ["Non Cash", "Depreciation", "Interest", "Tax", "פחת"], "is_income": False},
                     {"name": "REVENUE", "keys": ["REV", "Revenue", "Income", "הכנסות"], "is_income": True},
                     {"name": "COGS", "keys": ["COGS", "cost of goods", "עלות המכר"], "is_income": False},
                     {"name": "R&D", "keys": ["R&D", "Research", "מופ", "פיתוח"], "is_income": False},
                     {"name": "S&M", "keys": ["Sales", "Marketing", "S&M", "שיווק"], "is_income": False},
-                    {"name": "G&A", "keys": ["G&A", "General", "Administrative", "הנהלה"], "is_income": False},
-                    {"name": "OTHER", "keys": ["Non Cash", "Depreciation", "Interest", "Tax", "פחת", "amortization"], "is_income": False}
+                    {"name": "G&A", "keys": ["G&A", "General", "Administrative", "הנהלה"], "is_income": False}
                 ]
                 
                 row = 2
@@ -91,32 +89,37 @@ if uploaded_files:
                 
                 remaining_items = p_sum.copy()
                 
+                # אנחנו רוצים ש-REVENUE יהיה ראשון בדוח, אבל נסווג בנפרד
+                pnl_blocks = []
                 for cat in categories:
                     mask = remaining_items['Budget item'].str.contains('|'.join(cat["keys"]), case=False, na=False)
                     sub = remaining_items[mask]
                     remaining_items = remaining_items[~mask]
-                    
                     if not sub.empty:
-                        ws_pnl.write(row, 0, cat["name"], cat_head_fmt); ws_pnl.write(row, 1, '', cat_head_fmt); row += 1
-                        c_sum = 0
-                        for _, r in sub.iterrows():
-                            # הכנסות מוצגות כחיוביות (הופכים מינוס לפלוס), הוצאות מוצגות כחיוביות (הופכים פלוס לפלוס)
-                            # אבל בחישוב ה-EBITDA נתייחס לסימן המקורי
-                            val = r['Amount']
-                            display_val = abs(val) 
-                            ws_pnl.write(row, 0, r['Budget item'])
-                            ws_pnl.write(row, 1, display_val, num_fmt)
-                            
-                            # לוגיקת רווח: הכנסה (מינוס במקור) מפחיתה את היתרה השלילית
-                            grand_total_profit -= val # אם זה הוצאה (חיובי) זה יוריד מהרווח. אם הכנסה (שלילי) זה יוסיף.
-                            c_sum += display_val
-                            row += 1
-                        ws_pnl.write(row, 0, f"Total {cat['name']}", total_fmt); ws_pnl.write(row, 1, c_sum, total_fmt)
-                        row += 2
+                        pnl_blocks.append({"name": cat["name"], "data": sub})
+
+                # מיון הבלוקים כדי ש-Revenue יהיה ראשון ו-Other אחרון בתצוגה
+                pnl_blocks.sort(key=lambda x: 0 if "REVENUE" in x["name"] else (2 if "OTHER" in x["name"] else 1))
+
+                for block in pnl_blocks:
+                    ws_pnl.write(row, 0, block["name"], cat_head_fmt); ws_pnl.write(row, 1, '', cat_head_fmt); row += 1
+                    c_sum = 0
+                    for _, r in block["data"].iterrows():
+                        val = r['Amount']
+                        display_val = abs(val) # הופך הכל לחיובי לתצוגה
+                        ws_pnl.write(row, 0, r['Budget item'])
+                        ws_pnl.write(row, 1, display_val, num_fmt)
+                        
+                        # לוגיקה לחישוב רווח: הכנסה (מינוס) מוסיפה, הוצאה (פלוס) מפחיתה
+                        grand_total_profit -= val 
+                        c_sum += display_val
+                        row += 1
+                    ws_pnl.write(row, 0, f"Total {block['name']}", total_fmt); ws_pnl.write(row, 1, c_sum, total_fmt)
+                    row += 2
                 
-                ws_pnl.write(row, 0, "EBITDA (Net Profit/Loss)", head_fmt)
+                ws_pnl.write(row, 0, "NET PROFIT (EBITDA)", head_fmt)
                 ws_pnl.write(row, 1, grand_total_profit, head_fmt)
-                ws_pnl.set_column('A:B', 30)
+                ws_pnl.set_column('A:B', 35)
 
                 # --- 2. Data & 3. סינון חכם ---
                 final[['Entity', 'Date', 'Vendor', 'Account', 'Amount', 'Memo', 'Budget item', 'Account Type']].to_excel(writer, sheet_name='Data', index=False)
@@ -148,7 +151,7 @@ if uploaded_files:
                     ws_filt.write(3, i, h, head_fmt)
                 ws_filt.set_column('A:H', 15)
 
-            st.success("✅ הקובץ עודכן - גרסה V36 מוכנה!")
-            st.download_button("📥 הורד אקסל V36", output.getvalue(), "Finance_Dashboard_V36.xlsx")
+            st.success("✅ גרסה V37 מוכנה ומעודכנת!")
+            st.download_button("📥 הורד אקסל V37", output.getvalue(), "Finance_Dashboard_V37.xlsx")
         except Exception as e:
             st.error(f"שגיאה: {e}")
